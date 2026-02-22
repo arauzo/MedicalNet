@@ -108,74 +108,60 @@ class Bottleneck(nn.Module):
 
         return out
 
-
 class ResNet(nn.Module):
-
     def __init__(self,
                  block,
                  layers,
-                 sample_input_D,
-                 sample_input_H,
-                 sample_input_W,
-                 num_seg_classes,
+                 num_classes=2, # Cambiado para clasificación (ej. 2 para binaria)
                  shortcut_type='B',
-                 no_cuda = False):
+                 no_cuda=False):
         self.inplanes = 64
         self.no_cuda = no_cuda
         super(ResNet, self).__init__()
+        
+        # --- Extractor de características (Backbone) ---
         self.conv1 = nn.Conv3d(
-            1,
-            64,
-            kernel_size=7,
-            stride=(2, 2, 2),
-            padding=(3, 3, 3),
-            bias=False)
-            
+            1, 64, kernel_size=7, stride=(2, 2, 2), padding=(3, 3, 3), bias=False)
         self.bn1 = nn.BatchNorm3d(64)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool3d(kernel_size=(3, 3, 3), stride=2, padding=1)
+        
         self.layer1 = self._make_layer(block, 64, layers[0], shortcut_type)
-        self.layer2 = self._make_layer(
-            block, 128, layers[1], shortcut_type, stride=2)
-        self.layer3 = self._make_layer(
-            block, 256, layers[2], shortcut_type, stride=1, dilation=2)
-        self.layer4 = self._make_layer(
-            block, 512, layers[3], shortcut_type, stride=1, dilation=4)
+        self.layer2 = self._make_layer(block, 128, layers[1], shortcut_type, stride=2)
+        self.layer3 = self._make_layer(block, 256, layers[2], shortcut_type, stride=1, dilation=2)
+        self.layer4 = self._make_layer(block, 512, layers[3], shortcut_type, stride=1, dilation=4)
 
-        self.conv_seg = nn.Sequential(
-                                        nn.ConvTranspose3d(
-                                        512 * block.expansion,
-                                        32,
-                                        2,
-                                        stride=2
-                                        ),
-                                        nn.BatchNorm3d(32),
-                                        nn.ReLU(inplace=True),
-                                        nn.Conv3d(
-                                        32,
-                                        32,
-                                        kernel_size=3,
-                                        stride=(1, 1, 1),
-                                        padding=(1, 1, 1),
-                                        bias=False), 
-                                        nn.BatchNorm3d(32),
-                                        nn.ReLU(inplace=True),
-                                        nn.Conv3d(
-                                        32,
-                                        num_seg_classes,
-                                        kernel_size=1,
-                                        stride=(1, 1, 1),
-                                        bias=False) 
-                                        )
+        # --- CABEZA DE CLASIFICACIÓN PROFUNDA ---
+        self.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
+        
+        in_features = 512 * block.expansion
+        
+        # Multilayer Perceptron (MLP) para mayor capacidad de representación
+        self.classifier = nn.Sequential(
+            nn.Linear(in_features, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=0.5), # El Dropout ayuda a prevenir el sobreajuste en las capas densas
+            
+            nn.Linear(256, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=0.3),
+            
+            nn.Linear(64, num_classes) # Capa final de salida
+        )
 
+        # Inicialización de pesos
         for m in self.modules():
             if isinstance(m, nn.Conv3d):
-                m.weight = nn.init.kaiming_normal(m.weight, mode='fan_out')
+                # Init mode cambiado a 'fan_in' (estándar) o mantenemos 'fan_out' del original
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
             elif isinstance(m, nn.BatchNorm3d):
-                m.weight.data.fill_(1)
-                m.bias.data.zero_()
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
 
     def _make_layer(self, block, planes, blocks, shortcut_type, stride=1, dilation=1):
+        # ... (Este método se queda EXACTAMENTE IGUAL que en tu código original) ...
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
             if shortcut_type == 'A':
@@ -202,15 +188,21 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        # Paso por el extractor de características
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
         x = self.maxpool(x)
+        
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
-        x = self.conv_seg(x)
+
+        # Paso por la cabeza de clasificación
+        x = self.avgpool(x)       # Salida: [Batch_size, Channels, 1, 1, 1]
+        x = torch.flatten(x, 1)   # Aplanamos para que quede: [Batch_size, Channels]
+        x = self.classifier(x)            # Salida: [Batch_size, num_classes]
 
         return x
 
