@@ -6,3 +6,5 @@ numpy==1.26  #1.15.4
 nibabel==4.0.0
 scipy>=1.1.0
 argparse
+tqdm
+scikit-learn

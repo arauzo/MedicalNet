@@ -1,8 +1,13 @@
 import torch
-from models.resnet import resnet50
 import torch.optim as optim
 from torch import nn
 from tqdm import tqdm
+from sklearn.model_selection import train_test_split
+import nibabel
+import numpy as np
+
+from models.resnet import resnet50
+
 
 def train_model(model, train_loader, val_loader, num_epochs, learning_rate=1e-4, device='cuda'):
     """
@@ -15,7 +20,7 @@ def train_model(model, train_loader, val_loader, num_epochs, learning_rate=1e-4,
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
     
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=3, factor=0.5, verbose=True)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=3, factor=0.5)#, verbose=True)
 
     best_val_loss = float('inf')
 
@@ -129,15 +134,73 @@ def load_medicalnet_weights(model, weight_path):
     print(f"Pesos cargados con éxito. Se restauraron {len(filtered_dict)} de {len(model_dict)} capas de pesos.")
     return model
 
+def load_file_list(txt_path, label):
+    """Read a file with a file list and generates an array with label for each file"""
+    with open(txt_path, "r") as f:
+        files = [line.strip() for line in f if line.strip()]
+    labels = [label] * len(files)
+    return files, labels
+
+class NiftiDataset(torch.utils.data.Dataset):
+    def __init__(self, data_path, files, labels, transform=None):
+        self.data_path = data_path
+        self.files = files
+        self.labels = labels
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, idx):
+        # Load NIfTI
+        img = nibabel.load(data_path + self.files[idx])
+        data = img.get_fdata().astype(np.float32)
+
+        if self.transform:
+            data = self.transform(data)
+
+        data = torch.from_numpy(data).unsqueeze(0)  # add channel dim
+        label = torch.tensor(self.labels[idx], dtype=torch.long)
+        return data, label
+
 
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # --- Ejemplo de uso ---
+
+    # 0. Preparar carga de datos
+    data_path = "data/cuerpoV/"
+    files_normal,   labels_normal   = load_file_list(data_path + "sin_colapso-filtered.txt", 0)
+    files_collapse, labels_collapse = load_file_list(data_path + "colapsadas.txt",  1)
+    all_files  = files_normal  + files_collapse
+    all_labels = labels_normal + labels_collapse
+
+    train_files, val_files, train_labels, val_labels = train_test_split(all_files, all_labels,
+                                        test_size=0.2, random_state=42, stratify=all_labels)
+
+    train_dataset = NiftiDataset(data_path, train_files, train_labels)
+    val_dataset   = NiftiDataset(data_path, val_files, val_labels)
+
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset,
+        batch_size=4,
+        shuffle=True,
+        num_workers=4,
+        pin_memory=True
+    )
+
+    val_loader = torch.utils.data.DataLoader(
+        val_dataset,
+        batch_size=4,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=True
+    )
+
     # 1. Instanciar el modelo (por ejemplo, resnet50 modificado para 2 clases)
     num_classes = 2
     model = resnet50(num_classes=num_classes) 
-    print(model)
-    model_path = "path/to/models"
+    #print(model)
+    model_path = "pretrain/resnet_50.pth"
 
     # 2. Cargar los pesos
     model = load_medicalnet_weights(model, model_path)
@@ -149,4 +212,4 @@ if __name__ == "__main__":
     #         param.requires_grad = False
 
     # 4. Iniciar el entrenamiento (suponiendo que train_loader y val_loader están creados)
-    # model = train_model(model, train_loader, val_loader, num_epochs=30, learning_rate=1e-4, device=device)
+    model = train_model(model, train_loader, val_loader, num_epochs=30, learning_rate=1e-4, device=device)
