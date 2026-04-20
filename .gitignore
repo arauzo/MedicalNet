@@ -127,3 +127,7 @@ data/**/*.nii.gz
 data/**/*.txt
 pretrain/**/*.pth
 trails/**/*.pth
+
+*.pth
+*.pth.tar
+
