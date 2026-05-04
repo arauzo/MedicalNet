@@ -86,7 +86,7 @@ def generate_model(opt):
 
 
     if opt.phase != 'test' and opt.pretrain_path:
-        print(f'正在加载预训练模型 {opt.pretrain_path}')
+        print(f'Loading pre-trained model {opt.pretrain_path}')
         try:
             with torch.serialization.safe_globals(SAFE_GLOBALS):
                 pretrain = torch.load(
@@ -96,17 +96,17 @@ def generate_model(opt):
                 )
         
         except FileNotFoundError:
-            raise FileNotFoundError(f"预训练模型文件不存在: {opt.pretrain_path}")
+            raise FileNotFoundError(f"Not exist: {opt.pretrain_path}")
         except RuntimeError as e:
             if "is not in the safe globals list" in str(e):
                 raise RuntimeError(
-                    f"加载模型时安全检查失败！请将相关模块添加到白名单。错误详情：{e}\n"
-                    f"当前白名单模块：{SAFE_GLOBALS}"
+                    f"Security check failed while loading model! Please add the relevant module to the whitelist. Error details:{e}\n"
+                    f"Currently whitelisted modules: {SAFE_GLOBALS}"
                 ) from e
             else:
-                raise RuntimeError(f"加载预训练模型失败：{e}") from e
+                raise RuntimeError(f"Failed to load pre-trained model: {e}") from e
         except Exception as e:
-            raise Exception(f"加载模型时发生未知错误：{e}") from e
+            raise Exception(f"An unknown error occurred while loading the model: {e}") from e
         
         
         pretrain_dict = {k: v for k, v in pretrain['state_dict'].items() if k in net_dict.keys()}
