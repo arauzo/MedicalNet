@@ -3,16 +3,43 @@ import argparse
 import torch
 import torch.optim as optim
 from torch import nn
+import torchio as tio
+
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 import sklearn.metrics
 import nibabel
 import numpy as np
 
+# import matplotlib
+# matplotlib.use("Agg")
+# import matplotlib.pyplot
+
 from models.resnet import resnet50
 from models.simple import CT3DClassifier
 
-def train_model(model, train_loader, val_loader, num_epochs, learning_rate=1e-4, device='cuda'):
+def test_plot_matrix(volume, name):
+    # Threshold to show only relevant structures
+    threshold = volume.mean()
+    voxels = volume > threshold
+
+    fig = matplotlib.pyplot.figure()
+    ax = fig.add_subplot(111, projection='3d')
+
+    ax.voxels(voxels, edgecolor='k')
+    matplotlib.pyplot.savefig(name)
+    matplotlib.pyplot.close()
+
+def get_transform():
+    return tio.RandomAffine(
+        scales=(0.9, 1.1),
+        degrees=30,
+        translation=10,
+        isotropic=True,
+        image_interpolation='linear'
+    )
+
+def train_model(model, train_loader, val_loader, num_epochs, learning_rate=1e-4, device='cuda', exp_name='default'):
     """
     Bucle de entrenamiento para clasificación 3D.
     """
@@ -77,7 +104,7 @@ def train_model(model, train_loader, val_loader, num_epochs, learning_rate=1e-4,
                 val_loss += loss.item() * inputs.size(0)
                 #_, predicted = torch.max(outputs.data, 1)
                 probs = torch.softmax(outputs, dim=1)[:, 1]  # prob clase positiva
-                predicted = (probs > 0.03).int()  # threshold ajustable
+                predicted = (probs > 0.1).int()  # threshold ajustable
                 # print(outputs)
                 # print(probs)
                 # print(predicted)
@@ -93,6 +120,7 @@ def train_model(model, train_loader, val_loader, num_epochs, learning_rate=1e-4,
         all_preds = torch.cat(all_preds).numpy()
         all_targets = torch.cat(all_targets).numpy()
         epoch_val_f2 = sklearn.metrics.fbeta_score(all_targets, all_preds, beta=2)
+        cm = sklearn.metrics.confusion_matrix(all_targets, all_preds)
 
         # Actualizar el scheduler con la pérdida de validación
         scheduler.step(epoch_val_loss)
@@ -100,11 +128,12 @@ def train_model(model, train_loader, val_loader, num_epochs, learning_rate=1e-4,
         print(f"Train Loss: {epoch_train_loss:.4f} | Train Acc: {epoch_train_acc:.2f}%")
         print(f"Val Loss:   {epoch_val_loss:.4f} | Val Acc:   {epoch_val_acc:.2f}%")
         print(f"Val F2-score: {epoch_val_f2}")
-        
+        print(cm)
+
         # Guardar el mejor modelo
         if epoch_val_loss < best_val_loss:
             best_val_loss = epoch_val_loss
-            torch.save(model.state_dict(), "mejor_modelo_3d.pth")
+            torch.save(model.state_dict(), f"mejor_modelo_3d{exp_name}.pth")
             print(">>> ¡Nuevo mejor modelo guardado!")
 
     print("\nEntrenamiento finalizado.")
@@ -165,14 +194,20 @@ class NiftiDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         # Load NIfTI
-        img = nibabel.load(data_path + self.files[idx])
+        img = nibabel.load(self.data_path + self.files[idx])
         data = img.get_fdata().astype(np.float32)
 
+        # torchio expects shape (C, D, H, W)
+        data = torch.from_numpy(data).unsqueeze(0)
+        # test_plot_matrix(data.squeeze(), name=f"/tmp/Test{idx}-orig.png")
         if self.transform:
-            data = self.transform(data)
+            subject = tio.Subject(img=tio.ScalarImage(tensor=data))
+            subject = self.transform(subject)
+            data = subject.img.data
 
-        data = torch.from_numpy(data).unsqueeze(0)  # add channel dim
         label = torch.tensor(self.labels[idx], dtype=torch.long)
+        # print(f"{idx} Data shape: {data.shape}")
+        # test_plot_matrix(data.squeeze(), name=f"/tmp/Test{idx}.png")
         return data, label
 
 
@@ -185,10 +220,12 @@ if __name__ == "__main__":
     parser.add_argument('negative', help='File (.txt) with a list of files for negative class (ie. "sin_colapso-filtered.txt")')
     parser.add_argument('positive', help='File (.txt) with a list of files for positive class (ie. "colapsadas.txt")')
     parser.add_argument('-m', '--model', default='resnet50', help='Model to train (ie. simple)')
+    parser.add_argument('-e', '--epochs', type=int, default=300, help='Number of epochs to train')
+    parser.add_argument('-f', '--frozen', action='store_true', help='If resnet50 whether to freeze the backbone or not')
     args = parser.parse_args()
 
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
 
     # 0. Preparar carga de datos
     data_path = args.path
@@ -200,7 +237,7 @@ if __name__ == "__main__":
     train_files, val_files, train_labels, val_labels = train_test_split(all_files, all_labels,
                                         test_size=0.2, random_state=42, stratify=all_labels)
 
-    train_dataset = NiftiDataset(data_path, train_files, train_labels)
+    train_dataset = NiftiDataset(data_path, train_files, train_labels, transform=get_transform())
     val_dataset   = NiftiDataset(data_path, val_files, val_labels)
 
     train_loader = torch.utils.data.DataLoader(
@@ -208,7 +245,8 @@ if __name__ == "__main__":
         batch_size=4,
         shuffle=True,
         num_workers=4,
-        pin_memory=True
+        pin_memory=True,
+        drop_last=True,
     )
 
     val_loader = torch.utils.data.DataLoader(
@@ -216,22 +254,23 @@ if __name__ == "__main__":
         batch_size=4,
         shuffle=False,
         num_workers=4,
-        pin_memory=True
+        pin_memory=True,
     )
 
-    # 1. Instanciar el modelo (por ejemplo, resnet50 modificado para 2 clases)
+    # 1. Instanciar el modelo 
     num_classes = 2
-    if args.model == 'resnet50':
+    if args.model == 'resnet50':  # (resnet50 modificado para 2 clases)
         model = resnet50(num_classes=num_classes) 
         model_path = "pretrain/resnet_50.pth"
 
         # 2. Cargar los pesos
         model = load_medicalnet_weights(model, model_path)
 
-        # 3. (Opcional) Congelar el backbone 
-        for name, param in model.named_parameters():
-            if "classifier" not in name:
-                param.requires_grad = False
+        # 3. Congelar el backbone de MedicalNet
+        if args.frozen: 
+            for name, param in model.named_parameters():
+                if "classifier" not in name:
+                    param.requires_grad = False
 
     elif args.model == 'simple':
         model = CT3DClassifier()
@@ -240,4 +279,6 @@ if __name__ == "__main__":
 
 
     # 4. Iniciar el entrenamiento (suponiendo que train_loader y val_loader están creados)
-    model = train_model(model, train_loader, val_loader, num_epochs=300, learning_rate=1e-4, device=device)
+    model = train_model(model, train_loader, val_loader, num_epochs=args.epochs, learning_rate=1e-4, device=device, 
+                        exp_name=f"{args.model}{args.path.rstrip('/').split('/')[-1]}{args.epochs}{'frozen' if args.frozen else ''}")
+    
