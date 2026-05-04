@@ -18,17 +18,17 @@ import numpy as np
 from models.resnet import resnet50
 from models.simple import CT3DClassifier
 
-def test_plot_matrix(volume, name):
-    # Threshold to show only relevant structures
-    threshold = volume.mean()
-    voxels = volume > threshold
+# def test_plot_matrix(volume, name):
+#     # Threshold to show only relevant structures
+#     threshold = volume.mean()
+#     voxels = volume > threshold
 
-    fig = matplotlib.pyplot.figure()
-    ax = fig.add_subplot(111, projection='3d')
+#     fig = matplotlib.pyplot.figure()
+#     ax = fig.add_subplot(111, projection='3d')
 
-    ax.voxels(voxels, edgecolor='k')
-    matplotlib.pyplot.savefig(name)
-    matplotlib.pyplot.close()
+#     ax.voxels(voxels, edgecolor='k')
+#     matplotlib.pyplot.savefig(name)
+#     matplotlib.pyplot.close()
 
 def get_transform():
     return tio.RandomAffine(
@@ -206,7 +206,7 @@ class NiftiDataset(torch.utils.data.Dataset):
             data = subject.img.data
 
         label = torch.tensor(self.labels[idx], dtype=torch.long)
-        # print(f"{idx} Data shape: {data.shape}")
+        print(f"{idx} Data shape: {data.shape}")
         # test_plot_matrix(data.squeeze(), name=f"/tmp/Test{idx}.png")
         return data, label
 
