@@ -45,7 +45,8 @@ def train_model(model, train_loader, val_loader, num_epochs, learning_rate=1e-4,
     """
     model = model.to(device)
     
-    criterion = nn.CrossEntropyLoss(weight=torch.tensor([414 / (2* 400), 414 / (2 * 1)]).to(device))
+    #criterion = nn.CrossEntropyLoss(weight=torch.tensor([414 / (2* 400), 414 / (2 * 1)]).to(device))
+    criterion = nn.CrossEntropyLoss(weight=torch.tensor([414 / 330, 414 / 84]).to(device))
 #    pos_weight = torch.tensor([num_neg, num_pos])
 #    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     
@@ -72,7 +73,6 @@ def train_model(model, train_loader, val_loader, num_epochs, learning_rate=1e-4,
             loss = criterion(outputs, labels)
  
             loss.backward()
-
             optimizer.step()
 
             train_loss += loss.item() * inputs.size(0)
@@ -102,9 +102,9 @@ def train_model(model, train_loader, val_loader, num_epochs, learning_rate=1e-4,
                 loss = criterion(outputs, labels)
 
                 val_loss += loss.item() * inputs.size(0)
-                #_, predicted = torch.max(outputs.data, 1)
-                probs = torch.softmax(outputs, dim=1)[:, 1]  # prob clase positiva
-                predicted = (probs > 0.1).int()  # threshold ajustable
+                _, predicted = torch.max(outputs.data, 1)
+                # probs = torch.softmax(outputs, dim=1)[:, 1]  # prob clase positiva
+                # predicted = (probs > 0.5).int()  # threshold ajustable
                 # print(outputs)
                 # print(probs)
                 # print(predicted)
@@ -126,8 +126,7 @@ def train_model(model, train_loader, val_loader, num_epochs, learning_rate=1e-4,
         scheduler.step(epoch_val_loss)
         
         print(f"Train Loss: {epoch_train_loss:.4f} | Train Acc: {epoch_train_acc:.2f}%")
-        print(f"Val Loss:   {epoch_val_loss:.4f} | Val Acc:   {epoch_val_acc:.2f}%")
-        print(f"Val F2-score: {epoch_val_f2}")
+        print(f"Val Loss:   {  epoch_val_loss:.4f} | Val Acc:   {  epoch_val_acc:.2f}% | Val F2-score: {epoch_val_f2:.4f}")
         print(cm)
 
         # Guardar el mejor modelo
@@ -206,7 +205,7 @@ class NiftiDataset(torch.utils.data.Dataset):
             data = subject.img.data
 
         label = torch.tensor(self.labels[idx], dtype=torch.long)
-        print(f"{idx} Data shape: {data.shape}")
+        # print(f"{idx} Data shape: {data.shape}")
         # test_plot_matrix(data.squeeze(), name=f"/tmp/Test{idx}.png")
         return data, label
 
